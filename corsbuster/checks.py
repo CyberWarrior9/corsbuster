@@ -1,4 +1,4 @@
-"""12 CORS misconfiguration checks + baseline + multi-origin verification."""
+"""CORS checks + baseline + preflight + method-specific testing."""
 
 import asyncio
 from urllib.parse import urlparse
@@ -17,15 +17,17 @@ async def _send_cors_request(
     extra_headers: dict = None,
     timeout: int = 10,
     proxy: str = None,
+    method: str = "GET",
 ) -> CORSCheckResult:
-    """Send a GET request with a crafted Origin header and parse CORS response."""
+    """Send a request with a crafted Origin header and parse CORS response."""
     headers = {"Origin": origin, "User-Agent": DEFAULT_USER_AGENT}
     if extra_headers:
         headers.update(extra_headers)
 
     try:
         client_timeout = aiohttp.ClientTimeout(total=timeout)
-        async with session.get(
+        req_method = getattr(session, method.lower(), session.get)
+        async with req_method(
             url, headers=headers, timeout=client_timeout,
             proxy=proxy, allow_redirects=True,
         ) as resp:
@@ -300,3 +302,59 @@ ALL_CHECKS = [
     check_substring_match,
     check_include_match,
 ]
+
+
+# ── Preflight OPTIONS Check ──────────────────────────────────────────
+
+async def check_preflight(session, url, timeout=10, proxy=None, **kwargs):
+    """Send OPTIONS preflight request and check what methods/headers are allowed."""
+    headers = {
+        "Origin": "https://evil.com",
+        "Access-Control-Request-Method": "PUT",
+        "Access-Control-Request-Headers": "Authorization, Content-Type",
+        "User-Agent": DEFAULT_USER_AGENT,
+    }
+    try:
+        client_timeout = aiohttp.ClientTimeout(total=timeout)
+        async with session.options(
+            url, headers=headers, timeout=client_timeout,
+            proxy=proxy, allow_redirects=True,
+        ) as resp:
+            raw_headers = {k.lower(): v for k, v in resp.headers.items()}
+            acao = raw_headers.get("access-control-allow-origin", "")
+            acac = raw_headers.get("access-control-allow-credentials", "")
+            allow_methods = raw_headers.get("access-control-allow-methods", "")
+            allow_headers = raw_headers.get("access-control-allow-headers", "")
+
+            # check if evil origin is allowed in preflight
+            is_reflected = acao.strip().lower() in ("https://evil.com", "*")
+
+            return {
+                "is_reflected": is_reflected,
+                "acao": acao,
+                "acac": acac,
+                "allow_methods": allow_methods,
+                "allow_headers": allow_headers,
+                "status_code": resp.status,
+                "raw_headers": raw_headers,
+            }
+    except (asyncio.TimeoutError, aiohttp.ClientError, OSError):
+        return {
+            "is_reflected": False, "acao": "", "acac": "",
+            "allow_methods": "", "allow_headers": "",
+            "status_code": 0, "raw_headers": {},
+        }
+
+
+# ── Method-specific CORS Testing ─────────────────────────────────────
+
+EXTRA_METHODS = ["POST", "PUT", "DELETE", "PATCH"]
+
+
+async def check_method_cors(session, url, method, timeout=10, proxy=None, **kwargs):
+    """Test CORS reflection on a specific HTTP method."""
+    return await _send_cors_request(
+        session, url, "https://evil.com",
+        CheckName.REFLECTED_ORIGIN, timeout=timeout, proxy=proxy,
+        method=method,
+    )

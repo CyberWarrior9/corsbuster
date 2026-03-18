@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name="corsbuster",
-    version="1.1.0",
+    version="1.2.0",
     description="CORS Misconfiguration Scanner with Exploitability Verification",
     author="CyberWarrior9",
     url="https://github.com/CyberWarrior9/corsbuster",

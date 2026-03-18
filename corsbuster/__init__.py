@@ -1,6 +1,6 @@
 """CORSbuster - CORS Misconfiguration Scanner with Exploitability Verification."""
 
-__version__ = "1.1.0"
+__version__ = "1.2.0"
 
 # Default User-Agent that looks like a real browser
 DEFAULT_USER_AGENT = (
@@ -92,6 +92,12 @@ class ScanConfig:
     crawl_depth: int = 3
     bruteforce: bool = False
     stealth: bool = False
+    wayback: bool = False
+    subdomains: bool = False
+    methods: bool = False
+    scope: list = field(default_factory=list)
+    exclude: list = field(default_factory=list)
+    resume: bool = False
     custom_headers: dict = field(default_factory=dict)
 
 

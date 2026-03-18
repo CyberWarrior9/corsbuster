@@ -18,7 +18,8 @@ def build_parser() -> argparse.ArgumentParser:
             "  corsbuster -u https://target.com -c --depth 3\n"
             "  echo 'https://target.com/api/user' | corsbuster\n"
             "  waybackurls target.com | corsbuster --poc\n"
-            "  corsbuster -u https://target.com -b --stealth"
+            "  corsbuster -u https://target.com -b --stealth\n"
+            "  corsbuster -u target.com --subdomains --wayback -b --methods --stealth"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -43,8 +44,38 @@ def build_parser() -> argparse.ArgumentParser:
         help="Directory bruteforce with built-in 800+ path wordlist, then CORS scan found endpoints"
     )
     discovery.add_argument(
+        "--wayback", action="store_true",
+        help="Fetch historical endpoints from Wayback Machine"
+    )
+    discovery.add_argument(
+        "--subdomains", action="store_true",
+        help="Enumerate subdomains via crt.sh certificate transparency"
+    )
+    discovery.add_argument(
+        "--methods", action="store_true",
+        help="Also test CORS on POST, PUT, DELETE, PATCH (not just GET)"
+    )
+    discovery.add_argument(
         "--depth", type=int, default=3,
         help="Crawl depth (default: 3, used with -c/--crawl)"
+    )
+
+    # Scope
+    scope_group = parser.add_argument_group("Scope")
+    scope_group.add_argument(
+        "--scope", dest="scope", action="append", default=[],
+        help="Only scan URLs containing this domain (repeatable)"
+    )
+    scope_group.add_argument(
+        "--exclude", dest="exclude", action="append", default=[],
+        help="Skip URLs matching this pattern (repeatable, supports wildcards)"
+    )
+
+    # Session
+    session_group = parser.add_argument_group("Session")
+    session_group.add_argument(
+        "--resume", action="store_true",
+        help="Resume a previously interrupted scan from checkpoint"
     )
 
     # Authentication
@@ -194,5 +225,11 @@ def parse_args(argv: list = None) -> ScanConfig:
         crawl_depth=args.depth,
         bruteforce=args.bruteforce,
         stealth=stealth,
+        wayback=args.wayback,
+        subdomains=args.subdomains,
+        methods=args.methods,
+        scope=args.scope,
+        exclude=args.exclude,
+        resume=args.resume,
         custom_headers=custom_headers,
     )

@@ -13,6 +13,7 @@ from . import (
 )
 from . import checks as cors_checks
 from .analyzer import analyze_finding
+from .checkpoint import save_checkpoint
 
 
 class CORSScanner:
@@ -24,7 +25,8 @@ class CORSScanner:
         self.findings: list = []
         self.checks_performed = 0
         self._lock = asyncio.Lock()
-        self._backoff_hosts: dict = {}  # host -> backoff_seconds
+        self._backoff_hosts: dict = {}
+        self._scanned_urls: list = []  # for checkpoint
 
     def _create_ssl_context(self):
         if not self.config.verify_ssl:
@@ -160,7 +162,72 @@ class CORSScanner:
                     await self._smart_delay()
 
                 except Exception:
-                    pass  # Skip failed checks silently
+                    pass
+
+            # Method-specific testing (only if --methods and GET showed reflection)
+            has_get_reflection = any(
+                r.check_result.is_reflected for r in results
+                if r.check_result.check_name == CheckName.REFLECTED_ORIGIN
+            )
+            if self.config.methods and has_get_reflection:
+                for method in cors_checks.EXTRA_METHODS:
+                    try:
+                        await self._check_backoff(url)
+                        result = await cors_checks.check_method_cors(
+                            session, url, method,
+                            timeout=self.config.timeout,
+                            proxy=self.config.proxy,
+                        )
+                        async with self._lock:
+                            self.checks_performed += 1
+                        if result.is_reflected or self.config.verbose:
+                            analysis = analyze_finding(result, baseline, extra_headers)
+                            analysis.explanation = f"[{method}] {analysis.explanation}"
+                            results.append(analysis)
+                        await self._smart_delay()
+                    except Exception:
+                        pass
+
+            # Preflight OPTIONS check
+            if self.config.methods:
+                try:
+                    preflight = await cors_checks.check_preflight(
+                        session, url,
+                        timeout=self.config.timeout,
+                        proxy=self.config.proxy,
+                    )
+                    async with self._lock:
+                        self.checks_performed += 1
+                    if preflight["is_reflected"] and preflight["allow_methods"]:
+                        dangerous = {"PUT", "DELETE", "PATCH"}
+                        allowed = {m.strip().upper() for m in preflight["allow_methods"].split(",")}
+                        if dangerous & allowed:
+                            from . import CORSCheckResult as CR
+                            pfr = CR(
+                                check_name=CheckName.REFLECTED_ORIGIN,
+                                url=url,
+                                origin_sent="https://evil.com [OPTIONS preflight]",
+                                acao_received=preflight["acao"],
+                                acac_received=preflight["acac"],
+                                is_reflected=True,
+                                raw_headers=preflight["raw_headers"],
+                                status_code=preflight["status_code"],
+                            )
+                            analysis = analyze_finding(pfr, baseline, extra_headers)
+                            methods_str = ", ".join(sorted(dangerous & allowed))
+                            analysis.explanation = (
+                                f"PREFLIGHT: Dangerous methods ({methods_str}) allowed "
+                                f"cross-origin via OPTIONS preflight. {analysis.explanation}"
+                            )
+                            results.append(analysis)
+                except Exception:
+                    pass
+
+            # save checkpoint
+            async with self._lock:
+                self._scanned_urls.append(url)
+            if self.config.resume:
+                save_checkpoint(self._scanned_urls, self.config)
 
             return results
 

@@ -221,6 +221,11 @@ def analyze_finding(
         baseline_acao=baseline_acao,
     )
 
+    # Check for cache poisoning risk
+    cache_warning = check_cache_poisoning(check_result, baseline)
+    if cache_warning:
+        explanation += f" | {cache_warning}"
+
     # Generate PoC if exploitable
     poc_html = ""
     if exploitable:
@@ -237,3 +242,36 @@ def analyze_finding(
         explanation=explanation,
         poc_html=poc_html,
     )
+
+
+CDN_HEADERS = {"x-cache", "cf-cache-status", "x-varnish", "age", "x-cdn", "x-served-by"}
+
+
+def check_cache_poisoning(check_result, baseline) -> str:
+    """Check if dynamic ACAO without Vary:Origin creates cache poisoning risk."""
+    if not check_result.is_reflected:
+        return ""
+
+    acao = check_result.acao_received or ""
+    if acao.strip() == "*":
+        return ""  # wildcard is static, no poisoning risk
+
+    # check if Vary header includes Origin
+    raw = check_result.raw_headers
+    vary = raw.get("vary", "")
+    if "origin" in vary.lower():
+        return ""  # properly configured
+
+    # check for CDN/cache indicators
+    has_cache = any(h in raw for h in CDN_HEADERS)
+
+    if has_cache:
+        return (
+            "CACHE POISONING RISK: Dynamic ACAO without Vary:Origin header, "
+            "and caching detected. Attacker could poison CDN cache with their origin."
+        )
+    else:
+        return (
+            "Missing Vary:Origin on dynamic ACAO. Cache poisoning possible "
+            "if a CDN or reverse proxy caches this response."
+        )

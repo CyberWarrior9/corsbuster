@@ -10,7 +10,7 @@ CORSbuster runs 12 different CORS checks, then puts each finding through a 3-sta
 
 ```
 ╭──────────────────────────────────────────────────────────────────────╮
-│ CORSbuster v1.1.0 — CORS Misconfiguration Scanner                  │
+│ CORSbuster v1.2.0 — CORS Misconfiguration Scanner                  │
 │   Targets: 1 | Threads: 3 | Timeout: 10s | STEALTH MODE            │
 ╰──────────────────────────────────────────────────────────────────────╯
 
@@ -71,8 +71,23 @@ waybackurls target.com | corsbuster
 subfinder -d target.com | httpx | corsbuster --poc
 cat urls.txt | corsbuster -o report.json
 
-# go all in
-corsbuster -u https://target.com -b --discover -c --stealth --poc -o report.json
+# enumerate subdomains, test each for CORS
+corsbuster -u https://target.com --subdomains --stealth
+
+# pull historical endpoints from Wayback Machine
+corsbuster -u https://target.com --wayback
+
+# test CORS on POST/PUT/DELETE too, not just GET
+corsbuster -u https://target.com --methods
+
+# scope control — only scan target.com, skip static files
+corsbuster -u https://target.com -b --scope target.com --exclude "*.css" --exclude "/static/*"
+
+# resume an interrupted scan
+corsbuster -u https://target.com -b --stealth --resume
+
+# go all in — one command, full auto
+corsbuster -u target.com --subdomains --wayback --discover -b -c --methods --stealth --poc -o report.json
 
 # silent mode — just exploitable findings, tab-separated (for scripting)
 corsbuster -u https://target.com -s
@@ -152,6 +167,42 @@ Then combines all found endpoints and runs CORS checks on everything.
 Covers common API routes, admin panels, config files, framework-specific paths (WordPress, Laravel, Django, Spring, etc), sensitive files, and auth endpoints.
 
 Accepts 200, 301/302, and 403 as "endpoint exists" — because CORS headers sometimes leak even on forbidden endpoints.
+
+## Subdomain enumeration
+
+`--subdomains` queries crt.sh (certificate transparency logs) to find all subdomains of a target, checks which ones are alive, and adds them to the scan. No external tools needed.
+
+## Wayback Machine
+
+`--wayback` pulls historical URLs from web.archive.org. Finds deleted pages, old API endpoints, forgotten admin panels — stuff that's often still live but not linked anywhere. Filters out static files automatically.
+
+## HTTP method testing
+
+By default we only test GET. `--methods` also tests POST, PUT, DELETE, and PATCH — because some servers have different CORS rules per method. Also runs an OPTIONS preflight check and flags if dangerous methods (PUT/DELETE) are allowed cross-origin.
+
+## Cache poisoning detection
+
+When CORSbuster finds a dynamically reflected `Access-Control-Allow-Origin`, it checks if the `Vary: Origin` header is present. If it's missing and a CDN/cache is detected (via x-cache, cf-cache-status, etc), it flags a cache poisoning risk — an attacker could poison the cache with their origin.
+
+## Scope control
+
+Stay in scope during large scans:
+
+```bash
+# only scan URLs on target.com
+corsbuster -u https://target.com --subdomains -b --scope target.com
+
+# skip certain paths
+corsbuster -u https://target.com -b --exclude "*.css" --exclude "/static/*" --exclude "*robots*"
+```
+
+## Resume
+
+Long scans can be interrupted (ctrl+c) and resumed later. CORSbuster saves a checkpoint file and skips already-scanned URLs.
+
+```bash
+corsbuster -u https://target.com -b --stealth --resume
+```
 
 ## Output
 
